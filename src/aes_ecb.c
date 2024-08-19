@@ -25,7 +25,7 @@
 #include <string.h>
 
 static int __aes_ecb_crypt(struct zpc_aes_ecb *, u8 *, const u8 *, size_t,
-    unsigned long);
+    unsigned long, size_t *);
 static void __aes_ecb_reset(struct zpc_aes_ecb *);
 
 int
@@ -151,6 +151,9 @@ zpc_aes_ecb_encrypt(struct zpc_aes_ecb *aes_ecb, u8 * c, const u8 * m,
 	struct pkey_protkey *protkey;
 	unsigned long flags = 0;
 	int rc, rv, i;
+	const u8 *in_pos = m;
+	u8 *out_pos = c;
+	size_t bytes_processed = 0, len = mlen;
 
 	UNUSED(rv);
 
@@ -192,7 +195,7 @@ zpc_aes_ecb_encrypt(struct zpc_aes_ecb *aes_ecb, u8 * c, const u8 * m,
 		param = &aes_ecb->param;
 
 		for (;;) {
-			rc = __aes_ecb_crypt(aes_ecb, c, m, mlen, flags);
+			rc = __aes_ecb_crypt(aes_ecb, out_pos, in_pos, len, flags, &bytes_processed);
 			if (rc == 0) {
 				break;
 			} else {
@@ -217,6 +220,10 @@ zpc_aes_ecb_encrypt(struct zpc_aes_ecb *aes_ecb, u8 * c, const u8 * m,
 					rv = pthread_mutex_unlock(&aes_ecb->
 					    aes_key->lock);
 					assert(rv == 0);
+
+					in_pos += bytes_processed;
+					out_pos += bytes_processed;
+					len -= bytes_processed;
 				}
 				if (rc)
 					break;
@@ -237,6 +244,9 @@ zpc_aes_ecb_decrypt(struct zpc_aes_ecb *aes_ecb, u8 * m, const u8 * c,
 	struct pkey_protkey *protkey;
 	unsigned long flags = CPACF_M;  /* decrypt */
 	int rc, rv, i;
+	const u8 *in_pos = c;
+	u8 *out_pos = m;
+	size_t bytes_processed = 0, len = clen;
 
 	UNUSED(rv);
 
@@ -279,7 +289,7 @@ zpc_aes_ecb_decrypt(struct zpc_aes_ecb *aes_ecb, u8 * m, const u8 * c,
 		param = &aes_ecb->param;
 
 		for (;;) {
-			rc = __aes_ecb_crypt(aes_ecb, m, c, clen, flags);
+			rc = __aes_ecb_crypt(aes_ecb, out_pos, in_pos, len, flags, &bytes_processed);
 			if (rc == 0) {
 				break;
 			} else {
@@ -304,6 +314,10 @@ zpc_aes_ecb_decrypt(struct zpc_aes_ecb *aes_ecb, u8 * m, const u8 * c,
 					rv = pthread_mutex_unlock(&aes_ecb->
 					    aes_key->lock);
 					assert(rv == 0);
+
+					in_pos += bytes_processed;
+					out_pos += bytes_processed;
+					len -= bytes_processed;
 				}
 				if (rc)
 					break;
@@ -339,14 +353,20 @@ zpc_aes_ecb_free(struct zpc_aes_ecb **aes_ecb)
 
 static int
 __aes_ecb_crypt(struct zpc_aes_ecb *aes_ecb, u8 * out, const u8 * in,
-    size_t inlen, unsigned long flags)
+    size_t inlen, unsigned long flags, size_t *bytes_processed)
 {
 	struct cpacf_km_aes_param *param;
 	int rc, cc;
+	int rc2 = 0; // Fixme: remove test code
 
 	param = &aes_ecb->param;
 
-	cc = cpacf_km(aes_ecb->fc | flags, param, out, in, inlen);
+	if (inlen > 16) { // Fixme: remove test code
+		inlen = 16;
+		rc2 = ZPC_ERROR_WKVPMISMATCH;
+	}
+
+	cc = cpacf_km(aes_ecb->fc | flags, param, out, in, inlen, bytes_processed);
 	assert(cc == 0 || cc == 1 || cc == 2);
 	if (cc == 1) {
 		rc = ZPC_ERROR_WKVPMISMATCH;
@@ -355,6 +375,10 @@ __aes_ecb_crypt(struct zpc_aes_ecb *aes_ecb, u8 * out, const u8 * in,
 
 	rc = 0;
 err:
+
+	if (rc2 == ZPC_ERROR_WKVPMISMATCH) // Fixme: remove test code
+		rc = ZPC_ERROR_WKVPMISMATCH;
+
 	return rc;
 }
 
